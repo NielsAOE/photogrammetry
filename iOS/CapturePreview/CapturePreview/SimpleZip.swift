@@ -94,10 +94,15 @@ enum SimpleZip {
 
     private static func write(_ bytes: [UInt8], to out: OutputStream) throws -> Int {
         var idx = 0, total = 0
-        while idx < bytes.count {
-            let n = out.write(bytes[idx...], maxLength: bytes.count - idx)
-            if n <= 0 { throw ZipError(message: "Output stream write failed") }
-            idx += n; total += n
+        try bytes.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.bindMemory(to: UInt8.self).baseAddress else {
+                throw ZipError(message: "Output stream write failed")
+            }
+            while idx < bytes.count {
+                let n = out.write(base.advanced(by: idx), maxLength: bytes.count - idx)
+                if n <= 0 { throw ZipError(message: "Output stream write failed") }
+                idx += n; total += n
+            }
         }
         return total
     }
