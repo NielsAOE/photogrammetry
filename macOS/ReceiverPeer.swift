@@ -42,35 +42,43 @@ extension ReceiverPeer: MCNearbyServiceAdvertiserDelegate, MCSessionDelegate {
     // Receive the ZIP as a resource and expand it with /usr/bin/ditto (with error capture).
     func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
         guard error == nil, let localURL else { self.connectionStatus = "Receive failed"; return }
-        let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("OC_\(UUID().uuidString)", isDirectory: true)
-        try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-        let zipURL = root.appendingPathComponent(resourceName)
-        try? fm.removeItem(at: zipURL)
-        do { try fm.copyItem(at: localURL, to: zipURL) } catch { connectionStatus = "Copy failed"; return }
+        Task.detached(priority: .background) { [weak self] in
+            let fm = FileManager.default
+            let root = fm.temporaryDirectory.appendingPathComponent("OC_\(UUID().uuidString)", isDirectory: true)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let zipURL = root.appendingPathComponent(resourceName)
+            try? fm.removeItem(at: zipURL)
+            do { try fm.copyItem(at: localURL, to: zipURL) } catch {
+                await MainActor.run { self?.connectionStatus = "Copy failed" }
+                return
+            }
 
-        let expanded = root.appendingPathComponent("expanded", isDirectory: true)
-        try? fm.createDirectory(at: expanded, withIntermediateDirectories: true)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        p.arguments = ["-x", "-k", zipURL.path, expanded.path]
+            let expanded = root.appendingPathComponent("expanded", isDirectory: true)
+            try? fm.createDirectory(at: expanded, withIntermediateDirectories: true)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            p.arguments = ["-x", "-k", zipURL.path, expanded.path]
 
-        let pipe = Pipe(); p.standardError = pipe
-        do { try p.run(); p.waitUntilExit() } catch { connectionStatus = "Unzip failed"; return }
+            let pipe = Pipe(); p.standardError = pipe
+            do { try p.run(); p.waitUntilExit() } catch {
+                await MainActor.run { self?.connectionStatus = "Unzip failed" }
+                return
+            }
 
-        if p.terminationStatus != 0 {
-            let errData = pipe.fileHandleForReading.readDataToEndOfFile()
-            let msg = String(data: errData, encoding: .utf8) ?? ""
-            connectionStatus = "Unzip error (\(p.terminationStatus)): \(msg)"
-            return
-        }
+            if p.terminationStatus != 0 {
+                let errData = pipe.fileHandleForReading.readDataToEndOfFile()
+                let msg = String(data: errData, encoding: .utf8) ?? ""
+                await MainActor.run { self?.connectionStatus = "Unzip error (\(p.terminationStatus)): \(msg)" }
+                return
+            }
 
-        // Remove the archive to reclaim space
-        try? fm.removeItem(at: zipURL)
+            // Remove the archive to reclaim space
+            try? fm.removeItem(at: zipURL)
 
-        Task { @MainActor in
-            self.receivedFolder = expanded
-            self.connectionStatus = "Received \(resourceName)"
+            await MainActor.run {
+                self?.receivedFolder = expanded
+                self?.connectionStatus = "Received \(resourceName)"
+            }
         }
     }
 
