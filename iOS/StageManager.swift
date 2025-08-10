@@ -5,23 +5,43 @@ final class StageManager: ObservableObject {
     @Published var stageFolder: URL
     @Published var captureCount: Int = 0
     @Published var folderBytes: Int64 = 0
+    @Published var lastError: String?
 
     private var timer: Timer?
 
     init() {
         let base = FileManager.default.temporaryDirectory
         stageFolder = base.appendingPathComponent("OCStage_\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: stageFolder, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: stageFolder, withIntermediateDirectories: true)
+        } catch {
+            lastError = "Failed to create stage folder: \(error.localizedDescription)"
+            print("StageManager error: \(error)")
+        }
         startPolling()
     }
 
     deinit { timer?.invalidate() }
 
-    func resetStage() {
-        try? FileManager.default.removeItem(at: stageFolder)
+    @discardableResult
+    func resetStage() -> Bool {
+        do {
+            try FileManager.default.removeItem(at: stageFolder)
+        } catch {
+            lastError = "Failed to remove stage folder: \(error.localizedDescription)"
+            print("StageManager error: \(error)")
+            return false
+        }
         stageFolder = FileManager.default.temporaryDirectory.appendingPathComponent("OCStage_\(UUID().uuidString)", isDirectory: true)
-        try? FileManager.default.createDirectory(at: stageFolder, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: stageFolder, withIntermediateDirectories: true)
+        } catch {
+            lastError = "Failed to create stage folder: \(error.localizedDescription)"
+            print("StageManager error: \(error)")
+            return false
+        }
         updateStats()
+        return true
     }
 
     private func startPolling() {
