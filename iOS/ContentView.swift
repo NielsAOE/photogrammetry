@@ -14,6 +14,7 @@ struct ContentView: View {
     // AirDrop fallback
     @State private var showShareSheet = false
     @State private var shareItems: [Any] = []
+    @State private var shareZipURL: URL?
 
     // Cancellation
     @State private var previewSession: PhotogrammetrySession?
@@ -74,7 +75,13 @@ struct ContentView: View {
             }
             .padding()
             .navigationTitle("Capture & Preview")
-            .sheet(isPresented: $showShareSheet) { ShareSheet(activityItems: shareItems) }
+            .sheet(isPresented: $showShareSheet, onDismiss: {
+                if let url = shareZipURL {
+                    try? FileManager.default.removeItem(at: url)
+                    shareZipURL = nil
+                }
+                shareItems = []
+            }) { ShareSheet(activityItems: shareItems) }
             .onDisappear { peer.stopBrowsing() }
         }
     }
@@ -128,6 +135,7 @@ struct ContentView: View {
     func sendToMac() async {
         do {
             let zipURL = try SimpleZip.zipFolder(at: stage.stageFolder, zipName: "CaptureSet-\(UUID().uuidString).zip")
+            defer { try? FileManager.default.removeItem(at: zipURL) }
             try await peer.sendFile(zipURL)
         } catch { print("Multipeer zip send failed: \(error)") }
     }
@@ -136,6 +144,7 @@ struct ContentView: View {
     func shareViaAirDropFallback() async {
         do {
             let zipURL = try SimpleZip.zipFolder(at: stage.stageFolder, zipName: "CaptureSet-\(UUID().uuidString).zip")
+            shareZipURL = zipURL
             shareItems = [zipURL]
             showShareSheet = true
         } catch { print("AirDrop fallback zip failed: \(error)") }
