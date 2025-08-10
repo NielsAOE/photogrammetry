@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import RealityKit
 
 /// Guided capture around ObjectCaptureView/ObjectCaptureSession
@@ -80,7 +79,7 @@ struct ObjectCaptureContainer: UIViewControllerRepresentable {
 }
 
 final class ObjectCaptureViewController: UIViewController, ObjectCaptureSessionDelegate {
-    private var captureView: ObjectCaptureView<ObjectCaptureViewController>!
+    private var captureView: ObjectCaptureView!
     private var session: ObjectCaptureSession!
 
     // Provided by SwiftUI
@@ -106,9 +105,9 @@ final class ObjectCaptureViewController: UIViewController, ObjectCaptureSessionD
         session.sampleBufferCaptureEnabled = true
         session.isObjectMaskingEnabled = true
 
-        captureView = ObjectCaptureView(session: session)
-        captureView.frame = view.bounds
-        captureView.autoresizingMask = [UIView.AutoresizingMask.flexibleWidth, .flexibleHeight]
+        captureView = ObjectCaptureView(frame: view.bounds)
+        captureView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        captureView.session = session
         view.addSubview(captureView)
 
         // HUD
@@ -126,13 +125,12 @@ final class ObjectCaptureViewController: UIViewController, ObjectCaptureSessionD
         ])
 
         Task { @MainActor in
-            do { try await session.start(imagesDirectory: stageURL) }
-            catch { print("ObjectCapture start failed:", error) }
+            do { try await session.start() } catch { print("ObjectCapture start failed:", error) }
         }
     }
 
     // MARK: - ObjectCaptureSessionDelegate
-    func objectCaptureSession(_ session: ObjectCaptureSession, didAdd sample: ObjectCaptureSession.Sample) {
+    func objectCaptureSession(_ session: ObjectCaptureSession, didAdd sample: ObjectCaptureSample) {
         if isPaused { return }
         if turntableMode {
             let now = CACurrentMediaTime()
@@ -144,12 +142,11 @@ final class ObjectCaptureViewController: UIViewController, ObjectCaptureSessionD
         let target = stageURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
         let bytes = data // capture now; write off-thread below
         ioQueue.async {
-            do { try bytes.write(to: target, options: Data.WritingOptions.atomic) }
-            catch { print("Write failed:", error) }
+            do { try bytes.write(to: target, options: .atomic) } catch { print("Write failed:", error) }
         }
     }
 
-    func objectCaptureSession(_ session: ObjectCaptureSession, didChange state: ObjectCaptureSession.CaptureState) {
+    func objectCaptureSession(_ session: ObjectCaptureSession, didChange state: ObjectCaptureSession.State) {
         DispatchQueue.main.async { [weak self] in
             switch state {
             case .initializing: self?.hudLabel.text = "Initializing…"
