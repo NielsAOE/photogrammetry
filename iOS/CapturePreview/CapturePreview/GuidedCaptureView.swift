@@ -1,19 +1,35 @@
 import SwiftUI
 import RealityKit
 
-/// Guided capture around ObjectCaptureView/ObjectCaptureSession
-struct GuidedCaptureView: View {
+// MARK: - Guided capture around RealityKit's ObjectCaptureView/ObjectCaptureSession (Swift 6.1 / iOS 18)
+// Uses the modern SwiftUI-based ObjectCaptureView(session:) API.
+// - No UIKit bridge or delegate needed (the session publishes state you can observe).
+// - ObjectCaptureSession writes images to the imagesDirectory you pass to start(...).
+// - Controls like startDetecting()/startCapturing()/pause()/resume()/finish() are called directly.
+// - You can advance passes with beginNewScanPass() or beginNewScanPassAfterFlip().
+
+public struct GuidedCaptureView: View {
     @Binding var stageFolder: URL
 
+    @StateObject private var model = CaptureModel()
+
+    // UI toggles
     @State private var isPaused = false
     @State private var turntableMode = false
     @State private var exposureLockHint = false
 
-    var body: some View {
+    public init(stageFolder: Binding<URL>) {
+        self._stageFolder = stageFolder
+    }
+
+    public var body: some View {
         ZStack(alignment: .topLeading) {
-            ObjectCaptureContainer(stageFolder: $stageFolder,
-                                   isPaused: $isPaused,
-                                   turntableMode: $turntableMode)
+            // RealityKit's guided capture UI
+            ObjectCaptureView(session: model.session)
+                .ignoresSafeArea()
+                .task(id: stageFolder) { // (re)start when the target directory changes
+                    await model.startSession(imagesDirectory: stageFolder)
+                }
 
             // Guidance card
             VStack(alignment: .leading, spacing: 6) {
@@ -37,18 +53,69 @@ struct GuidedCaptureView: View {
             // Bottom toolbar
             VStack { Spacer()
                 HStack(spacing: 16) {
-                    Button { isPaused.toggle() } label: {
+                    // Session state-driven primary button(s)
+                    switch model.session.state {
+                    case .ready:
+                        Button {
+                            model.session.startDetecting()
+                        } label: { Label("Continue", systemImage: "arrow.right.circle") }
+
+                    case .detecting:
+                        Button {
+                            model.session.startCapturing()
+                        } label: { Label("Start Capture", systemImage: "camera.viewfinder") }
+
+                    case .capturing:
+                        if model.session.userCompletedScanPass {
+                            Button {
+                                if turntableMode {
+                                    model.session.beginNewScanPassAfterFlip()
+                                } else {
+                                    model.session.beginNewScanPass()
+                                }
+                            } label: { Label("New Pass", systemImage: "gobackward") }
+
+                            Divider().frame(height: 24)
+
+                            Button { model.session.finish() } label: {
+                                Label("Finish", systemImage: "checkmark.circle")
+                            }
+                        }
+
+                    case .finishing:
+                        ProgressView("Saving…")
+
+                    case .completed:
+                        Label("Completed", systemImage: "checkmark.seal")
+
+                    case .failed(let error):
+                        Label("Failed: \(error.localizedDescription)", systemImage: "xmark.octagon")
+                    
+                    default:
+                        EmptyView()
+                    }
+
+                    Spacer()
+                    Divider().frame(height: 24)
+
+                    Button {
+                        isPaused.toggle()
+                        if isPaused { model.session.pause() } else { model.session.resume() }
+                    } label: {
                         Label(isPaused ? "Resume" : "Pause", systemImage: isPaused ? "play.circle" : "pause.circle")
                     }
+
                     Divider().frame(height: 24)
+
                     Button { turntableMode.toggle() } label: {
                         Label(turntableMode ? "Turntable On" : "Turntable Off", systemImage: "dial.max")
                     }
+
                     Divider().frame(height: 24)
+
                     Button { exposureLockHint.toggle() } label: {
                         Label(exposureLockHint ? "Exposure Hint On" : "Exposure Hint Off", systemImage: "camera.aperture")
                     }
-                    Spacer()
                 }
                 .padding(10)
                 .background(.ultraThinMaterial)
@@ -60,103 +127,24 @@ struct GuidedCaptureView: View {
     }
 }
 
-struct ObjectCaptureContainer: UIViewControllerRepresentable {
-    @Binding var stageFolder: URL
-    @Binding var isPaused: Bool
-    @Binding var turntableMode: Bool
+// MARK: - Model wrapper for the session
+@MainActor
+final class CaptureModel: ObservableObject {
+    let session = ObjectCaptureSession()
 
-    func makeUIViewController(context: Context) -> ObjectCaptureViewController {
-        let vc = ObjectCaptureViewController()
-        vc.stageURL = stageFolder
-        return vc
-    }
+    /// Start (or restart) the session pointing to the folder where RealityKit will write images.
+    func startSession(imagesDirectory: URL) async {
+        var configuration = ObjectCaptureSession.Configuration()
+        // Optional: store intermediate snapshots/checkpoints alongside images for faster macOS reconstruction.
+        configuration.checkpointDirectory = imagesDirectory.appendingPathComponent("Snapshots", conformingTo: .directory)
+        // Optional: allow capturing more images than on-device reconstruction uses
+        // when you plan to reconstruct on Mac.
+        configuration.isOverCaptureEnabled = true
 
-    func updateUIViewController(_ uiViewController: ObjectCaptureViewController, context: Context) {
-        uiViewController.isPaused = isPaused
-        uiViewController.turntableMode = turntableMode
-        uiViewController.stageURL = stageFolder
-    }
-}
-
-final class ObjectCaptureViewController: UIViewController, ObjectCaptureSessionDelegate {
-    private var captureView: ObjectCaptureView!
-    private var session: ObjectCaptureSession!
-
-    // Provided by SwiftUI
-    var stageURL: URL = FileManager.default.temporaryDirectory
-
-    // controls
-    var isPaused: Bool = false
-    var turntableMode: Bool = false
-
-    private var lastSaveTime: TimeInterval = 0
-    private let minIntervalTurntable: TimeInterval = 0.8
-
-    private let hudLabel = UILabel()
-
-    // Background writer
-    private let ioQueue = DispatchQueue(label: "oc.writer.queue")
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-        session = ObjectCaptureSession()
-        session.delegate = self
-        session.sampleBufferCaptureEnabled = true
-        session.isObjectMaskingEnabled = true
-
-        captureView = ObjectCaptureView(frame: view.bounds)
-        captureView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        captureView.session = session
-        view.addSubview(captureView)
-
-        // HUD
-        hudLabel.text = ""
-        hudLabel.textColor = .white
-        hudLabel.backgroundColor = UIColor.black.withAlphaComponent(0.35)
-        hudLabel.layer.cornerRadius = 8
-        hudLabel.clipsToBounds = true
-        hudLabel.font = UIFont.preferredFont(forTextStyle: .caption1)
-        hudLabel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(hudLabel)
-        NSLayoutConstraint.activate([
-            hudLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            hudLabel.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -70)
-        ])
-
-        Task { @MainActor in
-            do { try await session.start() } catch { print("ObjectCapture start failed:", error) }
-        }
-    }
-
-    // MARK: - ObjectCaptureSessionDelegate
-    func objectCaptureSession(_ session: ObjectCaptureSession, didAdd sample: ObjectCaptureSample) {
-        if isPaused { return }
-        if turntableMode {
-            let now = CACurrentMediaTime()
-            if now - lastSaveTime < minIntervalTurntable { return }
-            lastSaveTime = now
-            DispatchQueue.main.async { [weak self] in self?.hudLabel.text = "Capture saved — rotate a bit…" }
-        }
-        guard let data = sample.photoDataRepresentation() else { return }
-        let target = stageURL.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
-        let bytes = data // capture now; write off-thread below
-        ioQueue.async {
-            do { try bytes.write(to: target, options: .atomic) } catch { print("Write failed:", error) }
-        }
-    }
-
-    func objectCaptureSession(_ session: ObjectCaptureSession, didChange state: ObjectCaptureSession.State) {
-        DispatchQueue.main.async { [weak self] in
-            switch state {
-            case .initializing: self?.hudLabel.text = "Initializing…"
-            case .ready: self?.hudLabel.text = "Ready"
-            case .running: self?.hudLabel.text = "Capturing…"
-            case .paused: self?.hudLabel.text = "Paused"
-            case .completed: self?.hudLabel.text = "Completed"
-            case .failed(let error): self?.hudLabel.text = "Failed: \(error.localizedDescription)"
-            @unknown default: self?.hudLabel.text = ""
-            }
+        do {
+            try await session.start(imagesDirectory: imagesDirectory, configuration: configuration)
+        } catch {
+            print("ObjectCaptureSession start failed:", error)
         }
     }
 }

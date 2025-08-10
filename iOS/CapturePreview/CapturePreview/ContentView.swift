@@ -51,7 +51,9 @@ struct ContentView: View {
                     Label("Shots: \(stage.captureCount)", systemImage: "camera")
                     Label("Size: \(byteString(stage.folderBytes))", systemImage: "externaldrive")
                     Spacer()
-                }.font(.subheadline).foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
                 Divider().padding(.vertical, 8)
 
@@ -119,22 +121,36 @@ struct ContentView: View {
             previewSession = session
             let req = PhotogrammetrySession.Request.modelFile(url: out, detail: .reduced)
 
-            let outputs = Task {
-                for await e in session.outputs {
+            let outputs = Task { @MainActor in
+                for try await e in session.outputs {
                     switch e {
-                    case .requestProgress(_, let f): progressText = "Building… \(Int(f*100))%"
-                    case .requestComplete(_, let r): if case .modelFile(let url) = r { previewURL = url }
-                    case .error(let err), .requestError(_, let err): progressText = "Error: \(err.localizedDescription)"
-                    default: break
+                    case .requestProgress(_, let f):
+                        progressText = "Building… \(Int(f * 100))%"
+
+                    case .requestComplete(_, let result):
+                        if case .modelFile(let url) = result { previewURL = url }
+
+                    case .requestError(_, let err):
+                        progressText = "Error: \(err.localizedDescription)"
+
+                    case .processingComplete:
+                        // Finished handling all pending requests
+                        break
+
+                    default:
+                        break
                     }
                 }
             }
+
             try session.process(requests: [req])
             _ = try await outputs.value
             progressText = previewURL == nil ? "No output" : "Done"
         } catch is CancellationError {
             progressText = "Cancelled"
-        } catch { progressText = "Failed: \(error.localizedDescription)" }
+        } catch {
+            progressText = "Failed: \(error.localizedDescription)"
+        }
     }
 
     func cancelPreview() { previewSession?.cancel() }
