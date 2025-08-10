@@ -22,47 +22,47 @@ enum SimpleZip {
             let (size, crc) = try fileSizeAndCRC(url: file)
             let lh = LocalHeader(nameLength: UInt16(nameData.count), uncompressedSize: UInt32(size), crc32: crc)
             let localOffset = offset
-            offset += writeLocalHeader(lh, nameData: nameData, to: out)
-            offset += writeFileDataStreaming(file: file, to: out)
+            offset += try writeLocalHeader(lh, nameData: nameData, to: out)
+            offset += try writeFileDataStreaming(file: file, to: out)
             let c = Central(name: name, header: lh, localHeaderOffset: localOffset)
             central.append(c)
         }
         let cdStart = offset
-        for c in central { offset += writeCentralDirectory(c, to: out) }
+        for c in central { offset += try writeCentralDirectory(c, to: out) }
         let cdSize = offset - cdStart
-        _ = writeEndOfCentralDirectory(count: UInt16(central.count), size: cdSize, offset: cdStart, to: out)
+        _ = try writeEndOfCentralDirectory(count: UInt16(central.count), size: cdSize, offset: cdStart, to: out)
         return outURL
     }
 
     private struct LocalHeader { let nameLength: UInt16; let uncompressedSize: UInt32; let crc32: UInt32 }
     private struct Central { let name: String; let header: LocalHeader; let localHeaderOffset: UInt32 }
 
-    private static func writeLocalHeader(_ h: LocalHeader, nameData: Data, to out: OutputStream) -> UInt32 {
+    private static func writeLocalHeader(_ h: LocalHeader, nameData: Data, to out: OutputStream) throws -> UInt32 {
         var b: [UInt8] = []
         b += le32(0x04034b50); b += le16(20); b += le16(0); b += le16(0); b += le16(0); b += le16(0)
         b += le32(h.crc32); b += le32(h.uncompressedSize); b += le32(h.uncompressedSize)
         b += le16(h.nameLength); b += le16(0)
-        let headerLen = write(b, to: out); _ = write(Array(nameData), to: out)
+        let headerLen = try write(b, to: out); _ = try write(Array(nameData), to: out)
         return UInt32(headerLen + nameData.count)
     }
-    private static func writeCentralDirectory(_ c: Central, to out: OutputStream) -> UInt32 {
+    private static func writeCentralDirectory(_ c: Central, to out: OutputStream) throws -> UInt32 {
         let nameData = c.name.data(using: .utf8) ?? Data()
         var b: [UInt8] = []
         b += le32(0x02014b50); b += le16(20); b += le16(20); b += le16(0); b += le16(0); b += le16(0); b += le16(0)
         b += le32(c.header.crc32); b += le32(c.header.uncompressedSize); b += le32(c.header.uncompressedSize)
         b += le16(UInt16(nameData.count)); b += le16(0); b += le16(0); b += le16(0); b += le16(0); b += le32(0)
         b += le32(c.localHeaderOffset)
-        let headerLen = write(b, to: out); _ = write(Array(nameData), to: out)
+        let headerLen = try write(b, to: out); _ = try write(Array(nameData), to: out)
         return UInt32(headerLen + nameData.count)
     }
-    private static func writeEndOfCentralDirectory(count: UInt16, size: UInt32, offset: UInt32, to out: OutputStream) -> UInt32 {
+    private static func writeEndOfCentralDirectory(count: UInt16, size: UInt32, offset: UInt32, to out: OutputStream) throws -> UInt32 {
         var b: [UInt8] = []
         b += le32(0x06054b50); b += le16(0); b += le16(0); b += le16(count); b += le16(count)
         b += le32(size); b += le32(offset); b += le16(0)
-        return UInt32(write(b, to: out))
+        return UInt32(try write(b, to: out))
     }
 
-    private static func writeFileDataStreaming(file: URL, to out: OutputStream) -> UInt32 {
+    private static func writeFileDataStreaming(file: URL, to out: OutputStream) throws -> UInt32 {
         guard let inp = InputStream(url: file) else { return 0 }
         inp.open(); defer { inp.close() }
         let bufSize = 64 * 1024
@@ -71,7 +71,7 @@ enum SimpleZip {
         while inp.hasBytesAvailable {
             let n = inp.read(&buffer, maxLength: bufSize)
             if n <= 0 { break }
-            total += UInt32(write(Array(buffer.prefix(n)), to: out))
+            total += UInt32(try write(Array(buffer.prefix(n)), to: out))
         }
         return total
     }
@@ -92,11 +92,11 @@ enum SimpleZip {
         return (size, crc ^ 0xFFFF_FFFF)
     }
 
-    private static func write(_ bytes: [UInt8], to out: OutputStream) -> Int {
+    private static func write(_ bytes: [UInt8], to out: OutputStream) throws -> Int {
         var idx = 0, total = 0
         while idx < bytes.count {
             let n = out.write(bytes[idx...], maxLength: bytes.count - idx)
-            if n <= 0 { break }
+            if n <= 0 { throw ZipError(message: "Output stream write failed") }
             idx += n; total += n
         }
         return total
@@ -105,4 +105,13 @@ enum SimpleZip {
     private static func le16(_ v: UInt16) -> [UInt8] { [UInt8(v & 0xff), UInt8((v >> 8) & 0xff)] }
     private static func le32(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xff), UInt8((v >> 8) & 0xff), UInt8((v >> 16) & 0xff), UInt8((v >> 24) & 0xff)] }
 
-    private static let crcTable: [UInt32] = { (0..<256).map { i in var c = UInt32(i); for _ in 0..<8 { c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1) }; return c }() }
+    private static let crcTable: [UInt32] = {
+        (0..<256).map { i in
+            var c = UInt32(i)
+            for _ in 0..<8 {
+                c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1)
+            }
+            return c
+        }
+    }()
+}
