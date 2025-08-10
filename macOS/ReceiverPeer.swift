@@ -1,5 +1,6 @@
 import Foundation
 import MultipeerConnectivity
+import Archive
 
 @MainActor
 final class ReceiverPeer: NSObject, ObservableObject {
@@ -39,7 +40,7 @@ extension ReceiverPeer: MCNearbyServiceAdvertiserDelegate, MCSessionDelegate {
         }
     }
 
-    // Receive the ZIP as a resource and expand it with /usr/bin/ditto (with error capture).
+    // Receive the ZIP as a resource and expand it using Foundation's Archive API.
     func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {
         guard error == nil, let localURL else { self.connectionStatus = "Receive failed"; return }
         Task.detached(priority: .background) { [weak self] in
@@ -55,20 +56,21 @@ extension ReceiverPeer: MCNearbyServiceAdvertiserDelegate, MCSessionDelegate {
 
             let expanded = root.appendingPathComponent("expanded", isDirectory: true)
             try? fm.createDirectory(at: expanded, withIntermediateDirectories: true)
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            p.arguments = ["-x", "-k", zipURL.path, expanded.path]
 
-            let pipe = Pipe(); p.standardError = pipe
-            do { try p.run(); p.waitUntilExit() } catch {
+            do {
+                let archive = try Archive(url: zipURL, accessMode: .read)
+                do {
+                    for entry in archive {
+                        let destination = expanded.appendingPathComponent(entry.path)
+                        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try archive.extract(entry, to: destination)
+                    }
+                } catch {
+                    await MainActor.run { self?.connectionStatus = "Unzip error: \(error.localizedDescription)" }
+                    return
+                }
+            } catch {
                 await MainActor.run { self?.connectionStatus = "Unzip failed" }
-                return
-            }
-
-            if p.terminationStatus != 0 {
-                let errData = pipe.fileHandleForReading.readDataToEndOfFile()
-                let msg = String(data: errData, encoding: .utf8) ?? ""
-                await MainActor.run { self?.connectionStatus = "Unzip error (\(p.terminationStatus)): \(msg)" }
                 return
             }
 
