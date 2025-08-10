@@ -7,6 +7,7 @@ final class CapturePeer: NSObject, ObservableObject {
     private let peerID = MCPeerID(displayName: UIDevice.current.name)
     private var session: MCSession!
     private var browser: MCNearbyServiceBrowser!
+    private var progressObserver: NSKeyValueObservation?
 
     @Published var isConnected = false
     @Published var connectionStatus = "Not connected"
@@ -35,10 +36,9 @@ final class CapturePeer: NSObject, ObservableObject {
         currentSendProgress = progress
         // Await completion via KVO on finished
         try await withCheckedThrowingContinuation { cont in
-            let obs = progress.observe(\ .isFinished) { _, _ in cont.resume() }
-            // Store observation until finish
-            _ = obs
+            progressObserver = progress.observe(\.isFinished) { _, _ in cont.resume() }
         }
+        progressObserver = nil
         connectionStatus = "Sent \(name)"
     }
 }
