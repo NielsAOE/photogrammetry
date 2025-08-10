@@ -113,9 +113,7 @@ enum SimpleZip {
     private static let crcTable: [UInt32] = {
         (0..<256).map { i in
             var c = UInt32(i)
-            for _ in 0..<8 {
-                c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1)
-            }
+            for _ in 0..<8 { c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1) }
             return c
         }
     }()

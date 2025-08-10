@@ -1,15 +1,15 @@
 import SwiftUI
 import RealityKit
 import UIKit
+import Observation
 
 struct ContentView: View {
-    @StateObject private var stage = StageManager()
+    @State private var stage = StageManager()
+    @State private var peer = CapturePeer()
 
     @State private var isProcessing = false
     @State private var progressText = "Idle"
     @State private var previewURL: URL?
-
-    @StateObject private var peer = CapturePeer()
 
     // AirDrop fallback
     @State private var showShareSheet = false
@@ -43,7 +43,7 @@ struct ContentView: View {
 
                     Spacer()
 
-                    Button { stage.resetStage() } label: { Label("Reset Stage", systemImage: "trash") }
+                    Button { _ = stage.resetStage() } label: { Label("Reset Stage", systemImage: "trash") }
                 }
 
                 // Stats row
@@ -90,9 +90,7 @@ struct ContentView: View {
                 set: { _ in stage.lastError = nil }
             )) {
                 Button("OK", role: .cancel) { stage.lastError = nil }
-            } message: {
-                Text(stage.lastError ?? "")
-            }
+            } message: { Text(stage.lastError ?? "") }
         }
     }
 
@@ -116,7 +114,8 @@ struct ContentView: View {
             cfg.sampleOrdering = .unordered
             cfg.isObjectMaskingEnabled = true
 
-            let out = FileManager.default.temporaryDirectory.appendingPathComponent("Preview-\(UUID().uuidString).usdz")
+            let out = FileManager.default.temporaryDirectory
+                .appendingPathComponent("Preview-\(UUID().uuidString).usdz")
             let session = try PhotogrammetrySession(input: stage.stageFolder, configuration: cfg)
             previewSession = session
             let req = PhotogrammetrySession.Request.modelFile(url: out, detail: .reduced)
@@ -126,17 +125,12 @@ struct ContentView: View {
                     switch e {
                     case .requestProgress(_, let f):
                         progressText = "Building… \(Int(f * 100))%"
-
                     case .requestComplete(_, let result):
                         if case .modelFile(let url) = result { previewURL = url }
-
                     case .requestError(_, let err):
                         progressText = "Error: \(err.localizedDescription)"
-
                     case .processingComplete:
-                        // Finished handling all pending requests
                         break
-
                     default:
                         break
                     }
@@ -161,7 +155,7 @@ struct ContentView: View {
             let zipURL = try SimpleZip.zipFolder(at: stage.stageFolder, zipName: "CaptureSet-\(UUID().uuidString).zip")
             defer { try? FileManager.default.removeItem(at: zipURL) }
             try await peer.sendFile(zipURL)
-        } catch { print("Multipeer zip send failed: \(error)") }
+        } catch { print("Multipeer zip send failed:", error) }
     }
 
     // MARK: - AirDrop fallback (ZIP)
@@ -171,7 +165,7 @@ struct ContentView: View {
             shareZipURL = zipURL
             shareItems = [zipURL]
             showShareSheet = true
-        } catch { print("AirDrop fallback zip failed: \(error)") }
+        } catch { print("AirDrop fallback zip failed:", error) }
     }
 
     // MARK: - Utils

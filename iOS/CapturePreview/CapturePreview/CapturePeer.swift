@@ -1,16 +1,24 @@
 import Foundation
 import MultipeerConnectivity
+import Observation
+import UIKit
 
 @MainActor
-final class CapturePeer: NSObject, ObservableObject {
+@Observable
+final class CapturePeer: NSObject {
+    // Multipeer constraints: 1–15 chars, lowercase letters/numbers/hyphen
+    // https://developer.apple.com/documentation/multipeerconnectivity/mcnearbyservicebrowser/init(peer:servicetype:)
     private let service = "oc-transfer"
-    private let peerID = MCPeerID(displayName: UIDevice.current.name)
-    private var session: MCSession!
-    private var browser: MCNearbyServiceBrowser!
 
-    @Published var isConnected = false
-    @Published var connectionStatus = "Not connected"
-    @Published var currentSendProgress: Progress?
+    // Internal MPC objects aren’t part of app state — ignore for observation.
+    @ObservationIgnored private let peerID = MCPeerID(displayName: UIDevice.current.name)
+    @ObservationIgnored private var session: MCSession!
+    @ObservationIgnored private var browser: MCNearbyServiceBrowser!
+
+    // UI state
+    var isConnected = false
+    var connectionStatus = "Not connected"
+    var currentSendProgress: Progress?
 
     override init() {
         super.init()
@@ -20,11 +28,17 @@ final class CapturePeer: NSObject, ObservableObject {
         browser.delegate = self
     }
 
-    func startBrowsing() { browser.startBrowsingForPeers(); connectionStatus = "Browsing…" }
+    func startBrowsing() {
+        browser.startBrowsingForPeers()
+        connectionStatus = "Browsing…"
+    }
+
     func stopBrowsing() { browser.stopBrowsingForPeers() }
 
     func sendFile(_ url: URL) async throws {
-        guard let dest = session.connectedPeers.first else { throw NSError(domain: "NoPeers", code: 1) }
+        guard let dest = session.connectedPeers.first else {
+            throw NSError(domain: "NoPeers", code: 1)
+        }
         let name = url.lastPathComponent
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             let progress = session.sendResource(at: url, withName: name, toPeer: dest) { [weak self] error in
@@ -36,11 +50,7 @@ final class CapturePeer: NSObject, ObservableObject {
                     }
                     self?.currentSendProgress = nil
                 }
-                if let error {
-                    cont.resume(throwing: error)
-                } else {
-                    cont.resume()
-                }
+                if let error { cont.resume(throwing: error) } else { cont.resume() }
             }
             currentSendProgress = progress
         }
@@ -49,24 +59,28 @@ final class CapturePeer: NSObject, ObservableObject {
 
 extension CapturePeer: MCSessionDelegate, MCNearbyServiceBrowserDelegate {
     // Browser
-    func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
-        browser.invitePeer(peerID, to: session, withContext: nil, timeout: 10)
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String : String]?) {
+        Task { @MainActor in
+            browser.invitePeer(peerID, to: session, withContext: nil, timeout: 10)
+        }
     }
-    func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {}
+    nonisolated func browser(_ browser: MCNearbyServiceBrowser, lostPeer peerID: MCPeerID) {}
 
     // Session state
-    func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
-        switch state {
-        case .connected: isConnected = true; connectionStatus = "Connected to \(peerID.displayName)"
-        case .connecting: isConnected = false; connectionStatus = "Connecting…"
-        case .notConnected: isConnected = false; connectionStatus = "Not connected"
-        @unknown default: break
+    nonisolated func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
+        Task { @MainActor in
+            switch state {
+            case .connected: self.isConnected = true; self.connectionStatus = "Connected to \(peerID.displayName)"
+            case .connecting: self.isConnected = false; self.connectionStatus = "Connecting…"
+            case .notConnected: self.isConnected = false; self.connectionStatus = "Not connected"
+            @unknown default: break
+            }
         }
     }
 
     // Unused
-    func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {}
-    func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
-    func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {}
-    func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {}
+    nonisolated func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {}
+    nonisolated func session(_ session: MCSession, didReceive stream: InputStream, withName streamName: String, fromPeer peerID: MCPeerID) {}
+    nonisolated func session(_ session: MCSession, didStartReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, with progress: Progress) {}
+    nonisolated func session(_ session: MCSession, didFinishReceivingResourceWithName resourceName: String, fromPeer peerID: MCPeerID, at localURL: URL?, withError error: Error?) {}
 }
