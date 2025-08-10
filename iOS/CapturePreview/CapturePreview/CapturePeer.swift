@@ -26,7 +26,7 @@ final class CapturePeer: NSObject, ObservableObject {
     func sendFile(_ url: URL) async throws {
         guard let dest = session.connectedPeers.first else { throw NSError(domain: "NoPeers", code: 1) }
         let name = url.lastPathComponent
-        try await withCheckedThrowingContinuation { cont in
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             let progress = session.sendResource(at: url, withName: name, toPeer: dest) { [weak self] error in
                 Task { @MainActor in
                     if let error {
