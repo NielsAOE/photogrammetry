@@ -79,9 +79,9 @@ struct ObjectCaptureContainer: UIViewControllerRepresentable {
     }
 }
 
-final class ObjectCaptureViewController: UIViewController, RealityKit.ObjectCaptureSessionDelegate {
-    private var captureView: ObjectCaptureView<EmptyView>!
-    private var session: RealityKit.ObjectCaptureSession!
+final class ObjectCaptureViewController: UIViewController, ObjectCaptureSessionDelegate {
+    private var captureView: ObjectCaptureView<ObjectCaptureViewController>!
+    private var session: ObjectCaptureSession!
 
     // Provided by SwiftUI
     var stageURL: URL = FileManager.default.temporaryDirectory
@@ -101,7 +101,7 @@ final class ObjectCaptureViewController: UIViewController, RealityKit.ObjectCapt
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        session = RealityKit.ObjectCaptureSession()
+        session = ObjectCaptureSession()
         session.delegate = self
         session.sampleBufferCaptureEnabled = true
         session.isObjectMaskingEnabled = true
@@ -132,7 +132,7 @@ final class ObjectCaptureViewController: UIViewController, RealityKit.ObjectCapt
     }
 
     // MARK: - ObjectCaptureSessionDelegate
-    func objectCaptureSession(_ session: RealityKit.ObjectCaptureSession, didAdd sample: RealityKit.ObjectCaptureSession.Sample) {
+    func objectCaptureSession(_ session: ObjectCaptureSession, didAdd sample: ObjectCaptureSession.Sample) {
         if isPaused { return }
         if turntableMode {
             let now = CACurrentMediaTime()
@@ -149,7 +149,7 @@ final class ObjectCaptureViewController: UIViewController, RealityKit.ObjectCapt
         }
     }
 
-    func objectCaptureSession(_ session: RealityKit.ObjectCaptureSession, didChange state: RealityKit.ObjectCaptureSession.CaptureState) {
+    func objectCaptureSession(_ session: ObjectCaptureSession, didChange state: ObjectCaptureSession.CaptureState) {
         DispatchQueue.main.async { [weak self] in
             switch state {
             case .initializing: self?.hudLabel.text = "Initializing…"
