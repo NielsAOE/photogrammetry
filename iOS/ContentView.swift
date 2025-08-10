@@ -83,6 +83,14 @@ struct ContentView: View {
                 shareItems = []
             }) { ShareSheet(activityItems: shareItems) }
             .onDisappear { peer.stopBrowsing() }
+            .alert("Stage Error", isPresented: Binding<Bool>(
+                get: { stage.lastError != nil },
+                set: { _ in stage.lastError = nil }
+            )) {
+                Button("OK", role: .cancel) { stage.lastError = nil }
+            } message: {
+                Text(stage.lastError ?? "")
+            }
         }
     }
 
