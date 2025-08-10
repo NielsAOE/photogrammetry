@@ -1,3 +1,4 @@
+// MARK: - File: CapturePeer.swift
 import Foundation
 import MultipeerConnectivity
 import Observation
@@ -6,14 +7,13 @@ import UIKit
 @MainActor
 @Observable
 final class CapturePeer: NSObject {
-    // Multipeer constraints: 1–15 chars, lowercase letters/numbers/hyphen
-    // https://developer.apple.com/documentation/multipeerconnectivity/mcnearbyservicebrowser/init(peer:servicetype:)
+    /// Multipeer constraints: 1–15 chars, lowercase letters/numbers/hyphen
     private let service = "oc-transfer"
 
-    // Internal MPC objects aren’t part of app state — ignore for observation.
+    // Internal MPC objects aren’t part of app state — ignore for observation
     @ObservationIgnored private let peerID = MCPeerID(displayName: UIDevice.current.name)
-    @ObservationIgnored private var session: MCSession!
-    @ObservationIgnored private var browser: MCNearbyServiceBrowser!
+    @ObservationIgnored private let session: MCSession
+    @ObservationIgnored private let browser: MCNearbyServiceBrowser
 
     // UI state
     var isConnected = false
@@ -21,19 +21,28 @@ final class CapturePeer: NSObject {
     var currentSendProgress: Progress?
 
     override init() {
+        let session = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .required)
+        self.session = session
+        self.browser = MCNearbyServiceBrowser(peer: peerID, serviceType: service)
         super.init()
-        session = MCSession(peer: peerID, securityIdentity: nil, encryptionPreference: .required)
         session.delegate = self
-        browser = MCNearbyServiceBrowser(peer: peerID, serviceType: service)
         browser.delegate = self
     }
 
     func startBrowsing() {
+        guard !isConnected else { return }
         browser.startBrowsingForPeers()
         connectionStatus = "Browsing…"
     }
 
     func stopBrowsing() { browser.stopBrowsingForPeers() }
+
+    func disconnect() {
+        stopBrowsing()
+        session.disconnect()
+        isConnected = false
+        connectionStatus = "Not connected"
+    }
 
     func sendFile(_ url: URL) async throws {
         guard let dest = session.connectedPeers.first else {
@@ -70,10 +79,17 @@ extension CapturePeer: MCSessionDelegate, MCNearbyServiceBrowserDelegate {
     nonisolated func session(_ session: MCSession, peer peerID: MCPeerID, didChange state: MCSessionState) {
         Task { @MainActor in
             switch state {
-            case .connected: self.isConnected = true; self.connectionStatus = "Connected to \(peerID.displayName)"
-            case .connecting: self.isConnected = false; self.connectionStatus = "Connecting…"
-            case .notConnected: self.isConnected = false; self.connectionStatus = "Not connected"
-            @unknown default: break
+            case .connected:
+                self.isConnected = true
+                self.connectionStatus = "Connected to \(peerID.displayName)"
+            case .connecting:
+                self.isConnected = false
+                self.connectionStatus = "Connecting…"
+            case .notConnected:
+                self.isConnected = false
+                self.connectionStatus = "Not connected"
+            @unknown default:
+                break
             }
         }
     }

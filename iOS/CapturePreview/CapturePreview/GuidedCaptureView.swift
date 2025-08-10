@@ -1,3 +1,4 @@
+// MARK: - File: GuidedCaptureView.swift
 import SwiftUI
 import RealityKit
 import Observation

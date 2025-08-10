@@ -1,3 +1,4 @@
+// MARK: - File: SimpleZip.swift
 import Foundation
 
 /// Minimal ZIP writer (store-only). Streams file reads to bound memory and computes CRC incrementally.

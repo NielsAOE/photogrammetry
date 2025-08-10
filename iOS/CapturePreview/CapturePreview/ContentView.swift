@@ -1,3 +1,4 @@
+// MARK: - File: ContentView.swift
 import SwiftUI
 import RealityKit
 import UIKit
@@ -5,16 +6,11 @@ import Observation
 
 struct ContentView: View {
     @State private var stage = StageManager()
-    @State private var peer = CapturePeer()
+    @State var peer: CapturePeer
 
     @State private var isProcessing = false
     @State private var progressText = "Idle"
     @State private var previewURL: URL?
-
-    // AirDrop fallback
-    @State private var showShareSheet = false
-    @State private var shareItems: [Any] = []
-    @State private var shareZipURL: URL?
 
     // Cancellation
     @State private var previewSession: PhotogrammetrySession?
@@ -26,11 +22,13 @@ struct ContentView: View {
                     .frame(height: 360)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
+                // Primary actions
                 HStack(spacing: 12) {
                     Button { Task { await reconstructPreview() } } label: {
                         Label("Build Preview (Reduced)", systemImage: "cube.transparent")
                     }
                     .disabled(isProcessing)
+                    .sensoryFeedback(.impact, trigger: isProcessing == false)
 
                     if isProcessing {
                         ProgressView(progressText).frame(minWidth: 120)
@@ -57,34 +55,32 @@ struct ContentView: View {
 
                 Divider().padding(.vertical, 8)
 
+                // Transfer
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Send to Mac for High Quality").font(.headline)
                     Text(peer.connectionStatus).font(.caption).foregroundStyle(.secondary)
                     HStack {
                         Button { peer.startBrowsing() } label: { Label("Find Mac", systemImage: "dot.radiowaves.left.and.right") }
+
                         Button { Task { await sendToMac() } } label: { Label("Send via Multipeer (ZIP)", systemImage: "macbook.and.iphone") }
                             .disabled(stage.captureCount == 0 || !peer.isConnected)
+
                         if let p = peer.currentSendProgress {
                             ProgressView(value: p.fractionCompleted) { Text("Sending…") }
                                 .frame(width: 120)
                         }
                         Spacer()
-                        Button { Task { await shareViaAirDropFallback() } } label: { Label("AirDrop (ZIP)", systemImage: "airplayaudio") }
+
+                        Button { Task { await shareViaSystemShare() } } label: { Label("Share (ZIP)", systemImage: "square.and.arrow.up.on.square") }
                             .disabled(stage.captureCount == 0)
                     }
                 }
+
                 Spacer()
             }
             .padding()
             .navigationTitle("Capture & Preview")
-            .sheet(isPresented: $showShareSheet, onDismiss: {
-                if let url = shareZipURL {
-                    try? FileManager.default.removeItem(at: url)
-                    shareZipURL = nil
-                }
-                shareItems = []
-            }) { ShareSheet(activityItems: shareItems) }
-            .onDisappear { peer.stopBrowsing() }
+            .toolbarTitleDisplayMode(.automatic)
             .alert("Stage Error", isPresented: Binding<Bool>(
                 get: { stage.lastError != nil },
                 set: { _ in stage.lastError = nil }
@@ -92,14 +88,15 @@ struct ContentView: View {
                 Button("OK", role: .cancel) { stage.lastError = nil }
             } message: { Text(stage.lastError ?? "") }
         }
+        .onDisappear { peer.stopBrowsing() }
     }
 
-    func deviceFreeBytes() -> Int64 {
+    private func deviceFreeBytes() -> Int64 {
         (try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
     }
 
     // MARK: - On-device preview (iOS supports .reduced)
-    func reconstructPreview() async {
+    private func reconstructPreview() async {
         guard stage.captureCount > 0 else { return }
         let minFree: Int64 = 200 * 1_024 * 1_024 // 200 MB safety
         guard deviceFreeBytes() > minFree else { progressText = "Low disk space"; return }
@@ -147,10 +144,10 @@ struct ContentView: View {
         }
     }
 
-    func cancelPreview() { previewSession?.cancel() }
+    private func cancelPreview() { previewSession?.cancel() }
 
     // MARK: - Multipeer send (ZIP via sendResource) with progress
-    func sendToMac() async {
+    private func sendToMac() async {
         do {
             let zipURL = try SimpleZip.zipFolder(at: stage.stageFolder, zipName: "CaptureSet-\(UUID().uuidString).zip")
             defer { try? FileManager.default.removeItem(at: zipURL) }
@@ -158,18 +155,18 @@ struct ContentView: View {
         } catch { print("Multipeer zip send failed:", error) }
     }
 
-    // MARK: - AirDrop fallback (ZIP)
-    func shareViaAirDropFallback() async {
+    // MARK: - System share (ZIP)
+    private func shareViaSystemShare() async {
         do {
             let zipURL = try SimpleZip.zipFolder(at: stage.stageFolder, zipName: "CaptureSet-\(UUID().uuidString).zip")
-            shareZipURL = zipURL
-            shareItems = [zipURL]
-            showShareSheet = true
-        } catch { print("AirDrop fallback zip failed:", error) }
+            // ShareLink can share a file URL directly.
+            // Present using a temporary sheet via .background .sheet modifier pattern.
+            SharedSheetPresenter.shared.present(items: [zipURL])
+        } catch { print("Share ZIP failed:", error) }
     }
 
     // MARK: - Utils
-    func byteString(_ bytes: Int64) -> String {
+    private func byteString(_ bytes: Int64) -> String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)

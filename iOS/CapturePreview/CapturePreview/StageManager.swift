@@ -1,3 +1,4 @@
+// MARK: - File: StageManager.swift
 import Foundation
 import Observation
 
@@ -23,10 +24,6 @@ final class StageManager {
         startPolling()
     }
 
-    // NOTE (Swift 6.1): `deinit` is nonisolated, so we must not touch
-    // main-actor state there. The polling task is written to exit on its own
-    // when `self` is released (see `startPolling`).
-
     @discardableResult
     func resetStage() -> Bool {
         do { try FileManager.default.removeItem(at: stageFolder) } catch {
@@ -49,8 +46,6 @@ final class StageManager {
 
     private func startPolling() {
         pollTask?.cancel()
-        // Use a weak self that is re-unwrapped every iteration so the task
-        // stops automatically once `self` is deallocated (no `deinit` needed).
         pollTask = Task { [weak self] in
             while let strongSelf = self, !Task.isCancelled {
                 await MainActor.run { strongSelf.updateStats() }
