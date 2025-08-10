@@ -10,6 +10,7 @@ final class ReceiverPeer: NSObject, ObservableObject {
 
     @Published var connectionStatus = "Not connected"
     @Published var receivedFolder: URL?
+    private var rootTempDirectory: URL?
 
     override init() {
         super.init()
@@ -21,6 +22,16 @@ final class ReceiverPeer: NSObject, ObservableObject {
 
     func startAdvertising() { advertiser.startAdvertisingPeer(); connectionStatus = "Advertising…" }
     func stopAdvertising() { advertiser.stopAdvertisingPeer(); connectionStatus = "Not advertising" }
+
+    func cleanupRootDirectory() {
+        guard let root = rootTempDirectory else { return }
+        rootTempDirectory = nil
+        Task.detached(priority: .background) {
+            try? FileManager.default.removeItem(at: root)
+        }
+    }
+
+    deinit { cleanupRootDirectory() }
 }
 
 extension ReceiverPeer: MCNearbyServiceAdvertiserDelegate, MCSessionDelegate {
@@ -77,6 +88,7 @@ extension ReceiverPeer: MCNearbyServiceAdvertiserDelegate, MCSessionDelegate {
 
             await MainActor.run {
                 self?.receivedFolder = expanded
+                self?.rootTempDirectory = root
                 self?.connectionStatus = "Received \(resourceName)"
             }
         }
