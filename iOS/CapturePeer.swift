@@ -7,7 +7,6 @@ final class CapturePeer: NSObject, ObservableObject {
     private let peerID = MCPeerID(displayName: UIDevice.current.name)
     private var session: MCSession!
     private var browser: MCNearbyServiceBrowser!
-    private var progressObserver: NSKeyValueObservation?
 
     @Published var isConnected = false
     @Published var connectionStatus = "Not connected"
@@ -27,19 +26,24 @@ final class CapturePeer: NSObject, ObservableObject {
     func sendFile(_ url: URL) async throws {
         guard let dest = session.connectedPeers.first else { throw NSError(domain: "NoPeers", code: 1) }
         let name = url.lastPathComponent
-        let progress = session.sendResource(at: url, withName: name, toPeer: dest) { [weak self] error in
-            Task { @MainActor in
-                if let error { self?.connectionStatus = "Send error: \(error.localizedDescription)" }
-                self?.currentSendProgress = nil
-            }
-        }
-        currentSendProgress = progress
-        // Await completion via KVO on finished
         try await withCheckedThrowingContinuation { cont in
-            progressObserver = progress.observe(\.isFinished) { _, _ in cont.resume() }
+            let progress = session.sendResource(at: url, withName: name, toPeer: dest) { [weak self] error in
+                Task { @MainActor in
+                    if let error {
+                        self?.connectionStatus = "Send error: \(error.localizedDescription)"
+                    } else {
+                        self?.connectionStatus = "Sent \(name)"
+                    }
+                    self?.currentSendProgress = nil
+                }
+                if let error {
+                    cont.resume(throwing: error)
+                } else {
+                    cont.resume()
+                }
+            }
+            currentSendProgress = progress
         }
-        progressObserver = nil
-        connectionStatus = "Sent \(name)"
     }
 }
 
