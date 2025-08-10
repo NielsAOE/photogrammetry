@@ -5,6 +5,7 @@ import AppKit
 struct ContentView: View {
     @StateObject private var peer = ReceiverPeer()
     @State private var stagedFolder: URL?
+    @State private var filteredFolder: URL?
     @State private var status = "Waiting…"
     @State private var detail: PhotogrammetrySession.Request.Detail = .full
     @State private var format: ModelFormat = .usdz
@@ -51,6 +52,7 @@ struct ContentView: View {
         }
         .padding()
         .frame(minWidth: 820, minHeight: 480)
+        .onDisappear { cleanupFilteredFolder() }
         .onReceive(peer.$receivedFolder) { folder in
             if let folder {
                 let filtered = filterToImages(folder)
@@ -146,6 +148,7 @@ struct ContentView: View {
 
     func filterToImages(_ folder: URL) -> URL {
         // Create a filtered temp dir with only supported image files to reduce surprises.
+        cleanupFilteredFolder()
         let fm = FileManager.default
         let filtered = fm.temporaryDirectory.appendingPathComponent("OC_Filtered_\(UUID().uuidString)", isDirectory: true)
         try? fm.createDirectory(at: filtered, withIntermediateDirectories: true)
@@ -155,7 +158,15 @@ struct ContentView: View {
                 try? fm.copyItem(at: f, to: dest)
             }
         }
+        filteredFolder = filtered
         return filtered
+    }
+
+    func cleanupFilteredFolder() {
+        if let old = filteredFolder {
+            try? FileManager.default.removeItem(at: old)
+            filteredFolder = nil
+        }
     }
 
     func byteString(_ bytes: Int64) -> String {
