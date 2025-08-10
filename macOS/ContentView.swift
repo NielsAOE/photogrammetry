@@ -52,12 +52,13 @@ struct ContentView: View {
         }
         .padding()
         .frame(minWidth: 820, minHeight: 480)
-        .onDisappear { cleanupFilteredFolder() }
+        .onDisappear { cleanupFilteredFolder(); peer.cleanupRootDirectory() }
         .onReceive(peer.$receivedFolder) { folder in
             if let folder {
                 let filtered = filterToImages(folder)
                 stagedFolder = filtered
                 status = "Received files: \(countImages(in: filtered))"
+                peer.cleanupRootDirectory()
             }
         }
     }
@@ -108,6 +109,7 @@ struct ContentView: View {
             status = "Cancelled"
         } catch { status = "Failed: \(error.localizedDescription)" }
         reconSession = nil
+        peer.cleanupRootDirectory()
     }
 
     func askForSaveURL(format: ModelFormat) -> URL? {
